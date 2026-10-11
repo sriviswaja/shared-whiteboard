@@ -403,6 +403,16 @@ def test_tc_sec_04_persistent_flooding_closes_the_connection(clock):
     assert 4290 in closes
 
 
+def test_tc_sec_04_occasional_bursts_do_not_add_up_to_a_disconnect(clock):
+    hub = Hub(clock=clock)
+    a = hub.connect(BOARD, "A")
+    closes = []
+    for _ in range(5):                                  # a burst well over the limit, every 10 s
+        closes += [hub.handle(a, '{"type": "ping"}') for _ in range(130)]
+        clock.now += 10
+    assert 4290 not in closes
+
+
 def test_tc_sec_04_bucket_refills_over_time(clock):
     hub = Hub(clock=clock)
     a = hub.connect(BOARD, "A")

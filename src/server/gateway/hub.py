@@ -21,7 +21,8 @@ from .ratelimit import TokenBucket
 from .room import BoardRoom, OperationRejected
 
 RATE_LIMIT_PER_SECOND = 60
-RATE_LIMIT_CLOSE_AFTER = 120      # dropped messages before the connection is closed
+RATE_LIMIT_CLOSE_AFTER = 120      # dropped messages (within the window below) before closing
+RATE_LIMIT_WINDOW = 5.0           # seconds; older drops are forgotten
 CURSOR_MIN_INTERVAL = 1 / 20      # about 20 cursor messages per second
 OUTBOX_LIMIT = 2000               # slow consumers are disconnected, not buffered forever
 
@@ -36,6 +37,7 @@ class Connection:
     bucket: TokenBucket
     outbox: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(OUTBOX_LIMIT))
     dropped: int = 0
+    drop_window_start: float = 0.0
     last_cursor: float = 0.0
     closing: bool = False
     loop: asyncio.AbstractEventLoop | None = None   # set by the WebSocket endpoint
@@ -115,6 +117,9 @@ class Hub:
             conn.send(_error(4003, "Not a member of this board"))
             return 4003
         if not conn.bucket.allow():
+            now = self.clock()
+            if conn.dropped == 0 or now - conn.drop_window_start > RATE_LIMIT_WINDOW:
+                conn.dropped, conn.drop_window_start = 0, now   # an old burst is forgiven
             conn.dropped += 1
             if conn.dropped == 1 or conn.dropped % 30 == 0:
                 conn.send(_error(CLOSE_RATE_LIMIT, "Rate limit exceeded"))
