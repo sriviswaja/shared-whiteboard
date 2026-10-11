@@ -1,6 +1,20 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-app = FastAPI(title="Shared Whiteboard")
+from . import models  # noqa: F401  (registers tables)
+from .api import boards
+from .db import Base, engine
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(title="Shared Whiteboard", lifespan=lifespan)
+app.include_router(boards.router)
 
 
 @app.get("/healthz")
