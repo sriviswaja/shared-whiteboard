@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import models  # noqa: F401  (registers tables)
-from .api import boards
+from .api import boards, versions
 from .db import Base, engine
 
 
@@ -20,3 +20,5 @@ app.include_router(boards.router)
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+
+app.include_router(versions.router)
