@@ -14,6 +14,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class Board(Base):
     __tablename__ = "boards"
 
@@ -62,3 +66,27 @@ class BoardSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class Version(Base):
+    __tablename__ = "versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board_id: Mapped[str] = mapped_column(String(32), index=True)
+    number: Mapped[int] = mapped_column(Integer)  # 1, 2, 3 ... per board
+    kind: Mapped[str] = mapped_column(String(10))  # auto | named | restore
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    seq: Mapped[int] = mapped_column(Integer)  # board op sequence at snapshot time
+    state: Mapped[list] = mapped_column(JSON)  # [{"id": ..., "data": {...}}, ...]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board_id: Mapped[str] = mapped_column(String(32), index=True)
+    action: Mapped[str] = mapped_column(String(20))
+    from_version: Mapped[int] = mapped_column(Integer)
+    new_version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
