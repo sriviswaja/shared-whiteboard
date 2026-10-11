@@ -90,6 +90,8 @@ def _props(props, allow_z, required):
     if not isinstance(props, dict) or (required and not props) or len(props) > MAX_PROPS:
         raise InvalidMessage("props/changes must be a small non-empty object")
     for key, value in props.items():
+        if key == "type":
+            raise InvalidMessage("type is reserved and cannot be a property")
         if key == "z":
             if not allow_z or isinstance(value, bool) or not isinstance(value, int):
                 raise InvalidMessage("z must be an integer")

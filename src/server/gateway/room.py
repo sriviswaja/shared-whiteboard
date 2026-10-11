@@ -168,16 +168,27 @@ class BoardRoom:
             return None
         return [op for op in self._log if op.seq > last_seq]
 
-    def replace_state(self, objects: list[dict]) -> int:
-        """Swap in a whole new board (version restore). Returns the new seq.
+    def load_state(self, objects: list[dict], seq: int) -> None:
+        """Start the room from saved state (used when a board is opened after a restart).
 
-        The seq keeps increasing so clients can tell the reset is newer.
+        The op log and duplicate-opId memory start empty, so a client resuming from an
+        older seq gets a full welcome instead of a replay.
         """
-        self.seq += 1
+        self.seq = seq
         self.elements = {
             o["id"]: Element(o["id"], o["type"], o.get("z", 0), dict(o["props"]),
-                             updated_seq=self.seq)
+                             updated_seq=seq, prop_seq={k: seq for k in o["props"]})
             for o in objects
         }
-        self._log.clear()   # old ops no longer describe this state
+        self._log.clear()
+        self._seen.clear()
+
+    def replace_state(self, objects: list[dict]) -> int:
+        """Swap in a whole new board (version restore). Returns the current seq.
+
+        The seq does NOT change: it must keep matching the saved operation log, which a
+        restore does not touch. Clients treat `board:reset` as authoritative whatever its
+        seq, and the cleared log makes older resumes fall back to a full welcome.
+        """
+        self.load_state(objects, self.seq)
         return self.seq
