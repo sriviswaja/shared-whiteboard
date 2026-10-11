@@ -42,10 +42,9 @@ def list_ops(db: Session, board_id: str, after_seq: int = 0) -> list[BoardOp]:
     return list(db.scalars(stmt))
 
 
-def load_board_state(db: Session, board_id: str) -> dict[str, dict]:
-    """Rebuild the board by replaying its ops in order (last write wins per object)."""
-    state: dict[str, dict] = {}
-    for op in list_ops(db, board_id):
+def apply_ops(state: dict[str, dict], ops) -> dict[str, dict]:
+    """Apply ops in order onto state (last write wins per object). Mutates state."""
+    for op in ops:
         if op.op_type == "add":
             state[op.object_id] = dict(op.payload)
         elif op.op_type == "update":
@@ -53,3 +52,8 @@ def load_board_state(db: Session, board_id: str) -> dict[str, dict]:
         elif op.op_type == "delete":
             state.pop(op.object_id, None)
     return state
+
+
+def load_board_state(db: Session, board_id: str) -> dict[str, dict]:
+    """Rebuild the board by replaying every op from the start."""
+    return apply_ops({}, list_ops(db, board_id))
