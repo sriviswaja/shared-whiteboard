@@ -38,12 +38,27 @@ class Connection:
     dropped: int = 0
     last_cursor: float = 0.0
     closing: bool = False
+    loop: asyncio.AbstractEventLoop | None = None   # set by the WebSocket endpoint
 
     @property
     def client_id(self) -> str:
         return self.participant.client_id
 
     def send(self, message: dict) -> None:
+        """Queue a message. Safe to call from another event loop's thread (the test client
+        runs every socket on its own loop); on a single loop it queues directly."""
+        if self.loop is not None and not self._on_own_loop():
+            self.loop.call_soon_threadsafe(self._put, message)
+        else:
+            self._put(message)
+
+    def _on_own_loop(self) -> bool:
+        try:
+            return asyncio.get_running_loop() is self.loop
+        except RuntimeError:
+            return False
+
+    def _put(self, message: dict) -> None:
         try:
             self.outbox.put_nowait(message)
         except asyncio.QueueFull:

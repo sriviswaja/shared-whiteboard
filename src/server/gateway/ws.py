@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..db import get_db
 from ..services import board as board_service
 from ..services.session import SessionError
+from . import persistence
 from .hub import Hub
 
 IDLE_TIMEOUT_SECONDS = 120   # clients ping every 30 s, so this means a dead connection
@@ -14,16 +15,26 @@ router = APIRouter()
 hub = Hub()
 
 
-def _board_exists(websocket: WebSocket, board_id: str) -> bool:
-    # Open and close the DB session right here instead of holding it for the whole
-    # socket. Honours test overrides of get_db.
-    factory = websocket.app.dependency_overrides.get(get_db, get_db)
-    gen = factory()
-    db = next(gen)
-    try:
+def _opener(websocket: WebSocket) -> persistence.DbOpener:
+    # Honours test overrides of get_db. Sessions are opened per use, never held open
+    # for the whole socket.
+    return persistence.opener_from_dependency(
+        websocket.app.dependency_overrides.get(get_db, get_db))
+
+
+def _board_exists(open_db: persistence.DbOpener, board_id: str) -> bool:
+    with open_db() as db:
         return board_service.get_board(db, board_id) is not None
-    finally:
-        gen.close()
+
+
+def _ensure_room(open_db: persistence.DbOpener, board_id: str) -> None:
+    """First connection to a board since the server started: load it and start saving."""
+    if board_id in hub.rooms:
+        return
+    with open_db() as db:
+        room = persistence.room_from_db(db, board_id)
+    persistence.attach_store(room, open_db)
+    hub.rooms[board_id] = room
 
 
 async def _writer(websocket: WebSocket, conn) -> None:
@@ -34,10 +45,12 @@ async def _writer(websocket: WebSocket, conn) -> None:
 @router.websocket("/ws/boards/{board_id}")
 async def board_socket(websocket: WebSocket, board_id: str, name: str = ""):
     await websocket.accept()
-    if not _board_exists(websocket, board_id):
+    open_db = _opener(websocket)
+    if not _board_exists(open_db, board_id):
         await websocket.send_json({"type": "error", "code": 4001, "message": "Board not found"})
         await websocket.close(code=4001)
         return
+    _ensure_room(open_db, board_id)
     try:
         conn = hub.connect(board_id, name)
     except SessionError as err:
@@ -45,6 +58,7 @@ async def board_socket(websocket: WebSocket, board_id: str, name: str = ""):
         await websocket.close(code=err.code)
         return
 
+    conn.loop = asyncio.get_running_loop()
     writer = asyncio.create_task(_writer(websocket, conn))
     close_code = 1000
     try:

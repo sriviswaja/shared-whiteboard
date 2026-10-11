@@ -435,13 +435,13 @@ def test_tc_sec_06_connection_can_only_ever_touch_its_own_board(hub):
 
 # ---------------------------------------------------------------- restore hook (used by Version Service)
 
-def test_board_reset_replaces_state_for_everyone_and_seq_keeps_growing(hub):
+def test_board_reset_replaces_state_for_everyone_and_keeps_seq_in_step_with_the_log(hub):
     a, b = hub.connect(BOARD, "A"), hub.connect(BOARD, "B")
     add(hub, a, "old")
     drain(a), drain(b)
     hub.board_reset(BOARD, [stroke("restored")])
     msg = [m for m in drain(b) if m["type"] == "board:reset"][0]
-    assert msg["seq"] == 2 and [o["id"] for o in msg["objects"]] == ["restored"]
+    assert msg["seq"] == 1 and [o["id"] for o in msg["objects"]] == ["restored"]
     assert [o["id"] for o in hub.room(BOARD).objects()] == ["restored"]
 
 
