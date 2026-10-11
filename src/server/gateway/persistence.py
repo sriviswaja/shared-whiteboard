@@ -1,4 +1,4 @@
-"""Board Service persistence: save every applied operation, load boards on first use.
+"""Board Service persistence: save every applied operation (in the background), load boards on first use.
 
 Covers SRS WB-F-040 (boards persist), WB-F-030 (auto-snapshot) and SAD 4.1.3/6.5.
 
@@ -7,13 +7,16 @@ The stored format is the one in services/board_ops.py: an object is a flat dict,
 {type, z, props} form, so this module converts at the boundary and nothing else has
 to change.
 """
+import atexit
 import logging
+import queue
+import threading
 from contextlib import contextmanager
 from typing import Callable, ContextManager
 
 from sqlalchemy.orm import Session
 
-from ..services.board_ops import append_op
+from ..models import BoardOp
 from ..services.snapshots import (
     _current_seq,
     create_snapshot,
@@ -53,23 +56,77 @@ def room_from_db(db: Session, board_id: str) -> BoardRoom:
     return room
 
 
-def attach_store(room: BoardRoom, open_db: DbOpener) -> None:
-    """Save each applied operation, and take an automatic snapshot when the rule says so."""
+class _Writer:
+    """Background writer: operations are queued by the gateway and saved in batches.
 
-    def save(op: Operation) -> None:
-        try:
+    The gateway handles every socket on one thread, so a blocking database write per
+    operation caps the whole server (TC-Perf-02: 150 ops/s made latency climb to seconds).
+    Here the gateway only does `queue.put`; one worker thread saves what has queued up in a
+    single transaction. Operations carry their own seq, so the stored log always matches
+    what clients were sent. A crash can lose the last few milliseconds of operations;
+    `flush()` runs at exit so a normal shutdown loses nothing.
+    """
+
+    MAX_BATCH = 500
+
+    def __init__(self):
+        self._queue: queue.Queue = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def submit(self, open_db: DbOpener, board_id: str, op: Operation) -> None:
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="op-writer", daemon=True)
+                self._thread.start()
+        self._queue.put((open_db, board_id, op))
+
+    def flush(self) -> None:
+        """Block until everything queued so far has been written."""
+        self._queue.join()
+
+    def _run(self) -> None:
+        while True:
+            batch = [self._queue.get()]
+            while len(batch) < self.MAX_BATCH:
+                try:
+                    batch.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
+            try:
+                self._write(batch)
+            except Exception:  # never take the live board down because the database failed
+                log.exception("could not save %d operations", len(batch))
+            finally:
+                for _ in batch:
+                    self._queue.task_done()
+
+    @staticmethod
+    def _write(batch) -> None:
+        groups: dict = {}
+        for open_db, board_id, op in batch:           # keep each board's ops in order
+            groups.setdefault((id(open_db), board_id), (open_db, board_id, []))[2].append(op)
+        for open_db, board_id, ops in groups.values():
             with open_db() as db:
-                row = append_op(db, room.board_id, op.client_id, op.op_type,
-                                op.object_id, stored_payload(op))
-                if row.seq != op.seq:
-                    log.error("seq drift on board %s: room %s, stored %s",
-                              room.board_id, op.seq, row.seq)
-                if should_auto_snapshot(db, room.board_id):
-                    create_snapshot(db, room.board_id, author="auto", auto=True)
-        except Exception:  # never take the live board down because the database failed
-            log.exception("could not save op %s on board %s", op.seq, room.board_id)
+                db.add_all(
+                    BoardOp(board_id=board_id, seq=op.seq, client_id=op.client_id,
+                            op_type=op.op_type, object_id=op.object_id,
+                            payload=stored_payload(op))
+                    for op in ops
+                )
+                db.commit()
+                if should_auto_snapshot(db, board_id):
+                    create_snapshot(db, board_id, author="auto", auto=True)
 
-    room.listeners.append(save)
+
+_writer = _Writer()
+flush = _writer.flush
+atexit.register(flush)
+
+
+def attach_store(room: BoardRoom, open_db: DbOpener) -> None:
+    """Save every operation the room applies (in the background), with auto-snapshots."""
+    room.listeners.append(lambda op: _writer.submit(open_db, room.board_id, op))
 
 
 def opener_from_dependency(factory) -> DbOpener:

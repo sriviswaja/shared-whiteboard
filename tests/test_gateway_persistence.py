@@ -45,6 +45,7 @@ def store():
 
 def live_hub(store):
     """A hub whose room for BOARD is loaded from the database and saves back to it."""
+    persistence.flush()                      # saves are written in the background
     hub = Hub(rate=1_000_000)
     with store() as db:
         room = persistence.room_from_db(db, BOARD)
@@ -87,6 +88,7 @@ def test_tc_persist_01_ws_objects_survive_a_server_restart(client):
         seen = 0
         while seen < 20:                       # wait until every op is acknowledged
             seen += ws.receive_json()["type"] == "op"
+    persistence.flush()
     app_hub.reset()                            # "restart": all rooms and sessions forgotten
     with client.websocket_connect(f"/ws/boards/{board}?name=Ben") as ws:
         welcome = ws.receive_json()
@@ -116,6 +118,7 @@ def test_ops_are_stored_in_the_flat_format_with_matching_seq(store):
     a = hub.connect(BOARD, "A")
     add(hub, a, "o1", colour="#123456")
     send(hub, a, type="op:update", opId="u1", objectId="o1", changes={"width": 9})
+    persistence.flush()
     with store() as db:
         ops = board_ops.list_ops(db, BOARD)
         assert [(o.seq, o.op_type) for o in ops] == [(1, "add"), (2, "update")]
@@ -134,6 +137,7 @@ def test_seq_continues_after_a_restart_with_no_gap(store):
     drain(b)
     add(reopened, b, "next")
     assert [m["seq"] for m in drain(b) if m["type"] == "op"] == [4]
+    persistence.flush()
     with store() as db:
         assert [o.seq for o in board_ops.list_ops(db, BOARD)] == [1, 2, 3, 4]
 
@@ -145,6 +149,7 @@ def test_rejected_and_duplicate_ops_are_not_saved(store):
     add(hub, a, "o1", op_id="same")                                  # duplicate opId
     send(hub, a, type="op:update", opId="x", objectId="ghost", changes={"width": 1})
     send(hub, a, type="op:update", opId="y", objectId="o1", changes={"type": "text"})  # reserved
+    persistence.flush()
     with store() as db:
         assert len(board_ops.list_ops(db, BOARD)) == 1
 
@@ -185,9 +190,11 @@ def test_wb_f_030_auto_snapshot_after_100_ops(store):
     a = hub.connect(BOARD, "A")
     for i in range(99):
         add(hub, a, f"o{i}")
+    persistence.flush()
     with store() as db:
         assert snapshots.latest_snapshot(db, BOARD) is None
     add(hub, a, "o99")
+    persistence.flush()
     with store() as db:
         snap = snapshots.latest_snapshot(db, BOARD)
         assert snap is not None and snap.is_auto and snap.seq == 100
@@ -228,12 +235,14 @@ def test_restore_then_restart_shows_the_restored_board(client):
         acks = 0
         while acks < 2:
             acks += ws.receive_json()["type"] == "op"
+        persistence.flush()
         version = client.post(f"/api/boards/{board}/versions",
                               json={"name": "two objects", "author": "Asha"}).json()["id"]
         ws.send_json({"type": "op:add", "opId": "three", "object": {
             "id": "three", "type": "rect", "z": 0, "props": {"x": 2, "y": 2}}})
         while ws.receive_json()["type"] != "op":
             pass
+    persistence.flush()
     assert client.post(f"/api/boards/{board}/versions/{version}/restore",
                        json={"author": "Ben"}).status_code == 201
     app_hub.reset()
