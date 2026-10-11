@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -39,6 +40,25 @@ class BoardOp(Base):
     op_type: Mapped[str] = mapped_column(String(16))  # add | update | delete
     object_id: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class BoardSnapshot(Base):
+    """Full board state as of op `seq`. Replay only needs the ops after it."""
+
+    __tablename__ = "board_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("boards.id"), index=True
+    )
+    seq: Mapped[int] = mapped_column(Integer)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    author: Mapped[str] = mapped_column(String(64))
+    is_auto: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
