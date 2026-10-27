@@ -51,6 +51,7 @@ def restore_version(
         AuditLog(
             board_id=board_id,
             action="restore",
+            author=author,
             from_version=old.id,
             new_version=new.id,
         )

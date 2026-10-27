@@ -79,3 +79,4 @@ class AuditLog(Base):
     from_version: Mapped[int] = mapped_column(Integer)
     new_version: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    author: Mapped[str] = mapped_column(String(64), default="anonymous")
