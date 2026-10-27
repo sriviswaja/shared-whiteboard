@@ -13,7 +13,9 @@ Design docs are in [`docs/`](docs): SRS, SAD and Test Plan.
 | Session service (join, leave, 20-participant limit) | Done |
 | Persistence (ordered ops, snapshots, state replay) | Done |
 | Version history (list, preview, restore, audit log) | Done |
-| Sync gateway (WebSocket, real-time broadcast) | In progress |
+| Sync gateway (WebSocket: ordered ops, last-write-wins, broadcast, presence, cursors, rate limit, saved to the database) | Done |
+| Load and rate-limit tests (k6, `tests/load/`) | Done |
+| Security tests (unguessable IDs, append-only history) | Done |
 | Canvas UI (drawing tools, remote cursors) | In progress |
 
 ## Quick start
