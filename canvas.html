@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shared Whiteboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f4f4f5}
+  #bar{display:flex;gap:6px;padding:8px;background:#fff;border-bottom:1px solid #ddd;flex-wrap:wrap;align-items:center}
+  button{padding:6px 10px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer}
+  button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+  #wrap{position:relative;height:calc(100% - 52px)}
+  canvas{position:absolute;inset:0;width:100%;height:100%;background:#fff;touch-action:none}
+  .cursor{position:absolute;pointer-events:none;font-size:12px;color:#fff;padding:1px 5px;border-radius:4px;transform:translate(8px,8px)}
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="tool-pen" data-tool="pen" class="active">Pen</button>
+  <button id="tool-rect" data-tool="rect">Rectangle</button>
+  <button id="tool-ellipse" data-tool="ellipse">Ellipse</button>
+  <button id="tool-line" data-tool="line">Line</button>
+  <button id="tool-text" data-tool="text">Text</button>
+  <button id="tool-eraser" data-tool="eraser">Eraser</button>
+  <button id="tool-select" data-tool="select">Select</button>
+  <button id="btn-delete">Delete</button>
+  <button id="btn-undo">Undo</button>
+  <button id="btn-redo">Redo</button>
+  <input id="color" type="color" value="#111111" title="Colour">
+</div>
+<div id="wrap"><canvas id="board"></canvas><div id="cursors"></div></div>
+
+<script>
+/* ---------- Sync layer ----------
+   Demo transport = BroadcastChannel (open this page in two tabs to see
+   remote cursors). Replace send()/onmessage with the team's WebSocket
+   client when the backend is ready; the message shapes stay the same. */
+const Sync = (() => {
+  const me = Math.random().toString(36).slice(2, 7);
+  const myColor = `hsl(${Math.floor(Math.random()*360)} 70% 45%)`;
+  const ch = new BroadcastChannel('shared-whiteboard');
+  const handlers = {};
+  ch.onmessage = e => { const m = e.data; if (m.from !== me && handlers[m.type]) handlers[m.type](m); };
+  return {
+    me, myColor,
+    on(type, fn){ handlers[type] = fn; },
+    send(type, payload){ ch.postMessage({ type, from: me, ...payload }); }
+  };
+})();
+
+/* ---------- State ---------- */
+const cv = document.getElementById('board'), ctx = cv.getContext('2d');
+let objs = [];            // committed objects
+let undoStack = [], redoStack = [];
+let tool = 'pen', draft = null, selected = null, dragLast = null;
+const colorEl = document.getElementById('color');
+
+const snap = () => JSON.stringify(objs);
+function record(){ undoStack.push(snap()); redoStack = []; }  // call BEFORE each change
+function broadcast(){ Sync.send('state', { objs }); }
+function undo(){ if(!undoStack.length) return; redoStack.push(snap()); objs = JSON.parse(undoStack.pop()); selected=null; broadcast(); render(); }
+function redo(){ if(!redoStack.length) return; undoStack.push(snap()); objs = JSON.parse(redoStack.pop()); selected=null; broadcast(); render(); }
+
+/* ---------- Geometry ---------- */
+function bbox(o){
+  if(o.type==='pen'||o.type==='line'){
+    const xs=o.pts.map(p=>p[0]), ys=o.pts.map(p=>p[1]);
+    return {x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys)};
+  }
+  if(o.type==='text'){ ctx.font=`${o.size}px sans-serif`; return {x:o.x,y:o.y-o.size,w:ctx.measureText(o.text).width,h:o.size*1.2}; }
+  return {x:Math.min(o.x,o.x+o.w),y:Math.min(o.y,o.y+o.h),w:Math.abs(o.w),h:Math.abs(o.h)};
+}
+function hit(o,x,y,pad=6){
+  const b=bbox(o);
+  if(o.type==='pen'||o.type==='line'){
+    for(let i=0;i<o.pts.length;i++){
+      const [ax,ay]=o.pts[i], [bx,by]=o.pts[i+1]||o.pts[i];
+      const dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy||1;
+      const t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/l));
+      if(Math.hypot(x-(ax+t*dx),y-(ay+t*dy))<=pad+o.width) return true;
+    }
+    return false;
+  }
+  return x>=b.x-pad&&x<=b.x+b.w+pad&&y>=b.y-pad&&y<=b.y+b.h+pad;
+}
+function topAt(x,y){ for(let i=objs.length-1;i>=0;i--) if(hit(objs[i],x,y)) return objs[i]; return null; }
+function move(o,dx,dy){
+  if(o.pts) o.pts=o.pts.map(p=>[p[0]+dx,p[1]+dy]); else { o.x+=dx; o.y+=dy; }
+}
+
+/* ---------- Rendering ---------- */
+function drawObj(o){
+  ctx.strokeStyle=o.color; ctx.fillStyle=o.color; ctx.lineWidth=o.width||2; ctx.lineCap='round'; ctx.lineJoin='round';
+  if(o.type==='pen'||o.type==='line'){
+    ctx.beginPath(); o.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+    if(o.pts.length===1) ctx.lineTo(o.pts[0][0]+0.1,o.pts[0][1]); ctx.stroke();
+  } else if(o.type==='rect'){ ctx.strokeRect(o.x,o.y,o.w,o.h); }
+  else if(o.type==='ellipse'){ ctx.beginPath(); ctx.ellipse(o.x+o.w/2,o.y+o.h/2,Math.abs(o.w/2),Math.abs(o.h/2),0,0,Math.PI*2); ctx.stroke(); }
+  else if(o.type==='text'){ ctx.font=`${o.size}px sans-serif`; ctx.fillText(o.text,o.x,o.y); }
+}
+function render(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  objs.forEach(drawObj); if(draft) drawObj(draft);
+  if(selected && objs.includes(selected)){
+    const b=bbox(selected); ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#2563eb'; ctx.lineWidth=1;
+    ctx.strokeRect(b.x-4,b.y-4,b.w+8,b.h+8); ctx.restore();
+  }
+}
+function resize(){ cv.width=cv.clientWidth; cv.height=cv.clientHeight; render(); }
+addEventListener('resize',resize); resize();
+
+/* ---------- Input ---------- */
+const pos = e => { const r=cv.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; };
+let start=null;
+cv.addEventListener('pointerdown',e=>{
+  const [x,y]=pos(e); start=[x,y]; cv.setPointerCapture(e.pointerId);
+  const color=colorEl.value;
+  if(tool==='pen') draft={type:'pen',color,width:2,pts:[[x,y]]};
+  else if(tool==='line') draft={type:'line',color,width:2,pts:[[x,y],[x,y]]};
+  else if(tool==='rect'||tool==='ellipse') draft={type:tool,color,width:2,x,y,w:0,h:0};
+  else if(tool==='text'){
+    const t=prompt('Text:'); start=null;
+    if(t){ record(); objs.push({type:'text',color,size:20,x,y,text:t}); broadcast(); }
+  }
+  else if(tool==='eraser'){ const o=topAt(x,y); if(o){ record(); objs=objs.filter(a=>a!==o); broadcast(); } }
+  else if(tool==='select'){ selected=topAt(x,y); dragLast=selected?[x,y]:null; if(selected) record(); }
+  render();
+});
+cv.addEventListener('pointermove',e=>{
+  const [x,y]=pos(e);
+  Sync.send('cursor',{x,y,color:Sync.myColor});
+  if(!start) return;
+  if(draft){
+    if(draft.type==='pen') draft.pts.push([x,y]);
+    else if(draft.type==='line') draft.pts[1]=[x,y];
+    else { draft.w=x-start[0]; draft.h=y-start[1]; }
+  } else if(tool==='eraser'){ const o=topAt(x,y); if(o){ record(); objs=objs.filter(a=>a!==o); broadcast(); } }
+  else if(tool==='select' && selected && dragLast){ move(selected,x-dragLast[0],y-dragLast[1]); dragLast=[x,y]; }
+  render();
+});
+cv.addEventListener('pointerup',()=>{
+  if(draft){ record(); objs.push(draft); draft=null; broadcast(); }
+  else if(tool==='select' && selected) broadcast();
+  start=null; dragLast=null; render();
+});
+
+/* ---------- Toolbar & keys ---------- */
+document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{
+  tool=b.dataset.tool; selected=null;
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===b));
+  render();
+});
+function del(){ if(selected){ record(); objs=objs.filter(o=>o!==selected); selected=null; broadcast(); render(); } }
+document.getElementById('btn-delete').onclick=del;
+document.getElementById('btn-undo').onclick=undo;
+document.getElementById('btn-redo').onclick=redo;
+addEventListener('keydown',e=>{
+  const mod=e.ctrlKey||e.metaKey;
+  if(mod&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
+  else if(mod&&e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); }
+  else if(e.key==='Delete'||e.key==='Backspace'){ del(); }
+});
+
+/* ---------- Remote cursors & state ---------- */
+const remote={}, curLayer=document.getElementById('cursors');
+Sync.on('state',m=>{ objs=m.objs; selected=null; render(); });
+Sync.on('cursor',m=>{
+  let el=remote[m.from];
+  if(!el){ el=remote[m.from]=document.createElement('div'); el.className='cursor'; el.textContent='User '+m.from; curLayer.appendChild(el); }
+  el.style.background=m.color; el.style.left=m.x+'px'; el.style.top=m.y+'px';
+  clearTimeout(el._t); el._t=setTimeout(()=>{ el.remove(); delete remote[m.from]; },4000);
+});
+</script>
+</body>
+</html>
