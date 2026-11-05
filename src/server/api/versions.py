@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..gateway import persistence
+from ..gateway.ws import hub
 from ..services import board as board_service
 from ..services import snapshots as snapshot_service
 from ..services import versions as version_service
@@ -47,6 +49,7 @@ def save_named_version(
     board_id: str, body: VersionCreate | None = None, db: Session = Depends(get_db)
 ):
     _require_board(db, board_id)
+    persistence.flush()   # include the strokes still waiting in the background writer
     body = body or VersionCreate()
     return snapshot_service.create_snapshot(
         db, board_id, author=body.author, name=body.name, auto=False
@@ -76,8 +79,12 @@ def restore_version(
     db: Session = Depends(get_db),
 ):
     _require_board(db, board_id)
+    persistence.flush()
     author = (body or RestoreRequest()).author
     new = version_service.restore_version(db, board_id, version_id, author)
     if new is None:
         raise HTTPException(status_code=404, detail="Version not found")
+    if board_id in hub.rooms:
+        # WB-F-034: everyone connected to the board sees the restored version at once
+        hub.board_reset(board_id, persistence.objects_from_state(new.state), reason="restore")
     return new

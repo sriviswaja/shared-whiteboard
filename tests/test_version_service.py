@@ -139,9 +139,12 @@ def test_tc_ver_05_restore_writes_audit_log(client, db, board):
     base = f"/api/boards/{board}/versions"
     append_op(db, board, "c1", "add", "s1", {"x": 1})
     a = client.post(base).json()["id"]
-    new_id = client.post(f"{base}/{a}/restore").json()["id"]
+    new_id = client.post(
+        f"{base}/{a}/restore", json={"author": "Viswaja"}
+    ).json()["id"]
     log = vs.list_audit(db, board)
     assert len(log) == 1
     assert (log[0].action, log[0].from_version, log[0].new_version) == (
         "restore", a, new_id,
     )
+    assert log[0].author == "Viswaja"

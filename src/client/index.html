@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Shared Whiteboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f4f4f5}
+  #bar{display:flex;gap:6px;padding:8px;background:#fff;border-bottom:1px solid #ddd;flex-wrap:wrap;align-items:center}
+  button{padding:6px 10px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer}
+  button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+  #wrap{position:relative;height:calc(100% - 52px)}
+  canvas{position:absolute;inset:0;width:100%;height:100%;background:#fff;touch-action:none}
+  #versions{position:absolute;right:8px;top:8px;width:310px;max-height:70%;overflow:auto;background:#fff;border:1px solid #ccc;border-radius:8px;padding:8px;z-index:5;font-size:13px}
+  #versions[hidden],#banner[hidden]{display:none}
+  #versions .ver{display:flex;gap:4px;align-items:center;padding:4px 0;border-top:1px solid #eee}
+  #versions .ver span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #banner{position:absolute;left:50%;top:8px;transform:translateX(-50%);background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:4px 10px;z-index:5;font-size:13px}
+  .cursor{position:absolute;pointer-events:none;font-size:12px;color:#fff;padding:1px 5px;border-radius:4px;transform:translate(8px,8px)}
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="tool-pen" data-tool="pen" class="active">Pen</button>
+  <button id="tool-rect" data-tool="rect">Rectangle</button>
+  <button id="tool-ellipse" data-tool="ellipse">Ellipse</button>
+  <button id="tool-line" data-tool="line">Line</button>
+  <button id="tool-text" data-tool="text">Text</button>
+  <button id="tool-eraser" data-tool="eraser">Eraser</button>
+  <button id="tool-select" data-tool="select">Select</button>
+  <button id="btn-delete">Delete</button>
+  <button id="btn-undo">Undo</button>
+  <button id="btn-redo">Redo</button>
+  <input id="color" type="color" value="#111111" title="Colour">
+  <select id="width" title="Thickness"><option value="1">Thin</option><option value="2" selected>Medium</option><option value="5">Thick</option><option value="8">Extra thick</option></select>
+  <button id="btn-save" title="Save a named version of this board">Save version</button>
+  <button id="btn-versions">Versions</button>
+  <button id="btn-link" title="Copy the link to this board">Copy link</button>
+  <span id="status" style="margin-left:auto;font-size:13px;color:#555">Connecting...</span>
+</div>
+<div id="wrap"><canvas id="board"></canvas><div id="cursors"></div><div id="banner" hidden></div><div id="versions" hidden></div></div>
+
+<script>
+/* ---------- Sync layer: WebSocket client for the gateway (/ws/boards/{id}) ----------
+   Messages follow SAD 5.2: op:add / op:update / op:delete / cursor:move / ping out,
+   welcome / op / presence / cursor / board:reset / error in. The page is served by the
+   FastAPI server (http://127.0.0.1:8000/), so REST and WebSocket share one origin. */
+const params = new URLSearchParams(location.search);
+const API = location.origin;
+const WS_BASE = API.replace(/^http/, 'ws');
+let boardId = params.get('board');
+const store = { get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+                set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+const myName = (params.get('name') || store.get('wbName') || ('Guest-' + Math.random().toString(36).slice(2,6))).slice(0,30);
+store.set('wbName', myName);
+const statusEl = document.getElementById('status');
+const setStatus = t => { statusEl.textContent = t; };
+
+const myTag = Math.random().toString(36).slice(2,7);
+let idCounter = 0;
+const newId = () => `${myTag}-${(++idCounter).toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+
+const Sync = (() => {
+  let ws = null, retry = 0, pingTimer = null, people = [];
+  const handlers = {};
+  const api = {
+    online: false, myId: null,
+    on(type, fn){ handlers[type] = fn; },
+    send(msg){ if(ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); },
+    setPeople(list){ people = list; api.showStatus(); },
+    showStatus(){ setStatus(`Connected as ${myName} · ${people.length} online`); },
+    connect(){
+      ws = new WebSocket(`${WS_BASE}/ws/boards/${boardId}?name=${encodeURIComponent(myName)}`);
+      ws.onopen = () => { retry = 0; pingTimer = setInterval(() => api.send({type:'ping'}), 30000); };
+      ws.onmessage = e => { const m = JSON.parse(e.data); if(handlers[m.type]) handlers[m.type](m); };
+      ws.onclose = ev => {
+        api.online = false; clearInterval(pingTimer);
+        if(ev.code === 4001){ setStatus('Board not found'); return; }
+        if(ev.code === 4002){ setStatus('Board is full (20 people)'); return; }
+        if(ev.code === 4003){ setStatus('Connection refused (invalid name)'); return; }
+        setStatus('Disconnected, reconnecting...');
+        setTimeout(api.connect, Math.min(1000 * 2 ** retry++, 10000));   // WB-F-023
+      };
+    }
+  };
+  return api;
+})();
+
+/* canvas object <-> gateway object */
+const TYPE_OUT = { pen: 'stroke' }, TYPE_IN = { stroke: 'pen' };
+const r1 = n => Math.round(n * 10) / 10;
+function thin(pts){                                   // gateway limit: 5000 points per stroke
+  const MAX = 2000; if(pts.length <= MAX) return pts;
+  const k = Math.ceil(pts.length / MAX), out = pts.filter((_, i) => i % k === 0);
+  if(out[out.length-1] !== pts[pts.length-1]) out.push(pts[pts.length-1]);
+  return out;
+}
+function toServer(o){
+  const props = {};
+  for(const [k, v] of Object.entries(o)){
+    if(k === 'id' || k === 'type' || k === 'z') continue;
+    if(k === 'pts') props.points = thin(v).map(p => [r1(p[0]), r1(p[1])]);
+    else props[k] = typeof v === 'number' ? r1(v) : v;
+  }
+  return { type: TYPE_OUT[o.type] || o.type, z: o.z || 0, props };
+}
+function fromServer(e){
+  const o = { id: e.id, type: TYPE_IN[e.type] || e.type, z: e.z || 0 };
+  for(const [k, v] of Object.entries(e.props)) o[k === 'points' ? 'pts' : k] = v;
+  return o;
+}
+
+/* ---------- State ---------- */
+const cv = document.getElementById('board'), ctx = cv.getContext('2d');
+let objs = [];            // committed objects
+let undoStack = [], redoStack = [];
+let previewObjs = null;       // read-only view of an old version (WB-F-033)
+let tool = 'pen', draft = null, selected = null, dragLast = null, resizing = null;
+const colorEl = document.getElementById('color'), widthEl = document.getElementById('width');
+
+const snap = () => JSON.stringify(objs);
+function record(){ undoStack.push(snap()); redoStack = []; }  // call BEFORE each change
+const shadow = new Map();          // id -> what the server has for each object we know about
+const deleted = new Set();         // ids the server has tombstoned (ids can never be reused)
+let foreign = new Set(), remoteDeleted = new Set();   // objects other people made / removed
+const nextZ = () => objs.reduce((m, o) => Math.max(m, o.z || 0), 0) + 1;
+const byZ = () => objs.sort((a, b) => (a.z || 0) - (b.z || 0));
+
+/* Send only the difference between what we show and what the server has. */
+function broadcast(){
+  if(!Sync.online) return;
+  const keep = new Set();
+  for(const o of objs){
+    if(deleted.has(o.id)) o.id = newId();             // undo of a delete: add under a fresh id
+    keep.add(o.id);
+    const now = toServer(o), old = shadow.get(o.id);
+    if(!old){
+      Sync.send({ type:'op:add', opId:newId(), object:{ id:o.id, type:now.type, z:now.z, props:now.props } });
+    } else {
+      const ch = {};
+      for(const k of Object.keys(now.props)) if(JSON.stringify(now.props[k]) !== JSON.stringify(old.props[k])) ch[k] = now.props[k];
+      if(now.z !== old.z) ch.z = now.z;
+      if(Object.keys(ch).length) Sync.send({ type:'op:update', opId:newId(), objectId:o.id, changes:ch });
+    }
+    shadow.set(o.id, now);
+  }
+  for(const id of [...shadow.keys()]) if(!keep.has(id)){
+    Sync.send({ type:'op:delete', opId:newId(), objectId:id });
+    shadow.delete(id); deleted.add(id);
+  }
+}
+/* Undo/redo restore our own earlier picture but never delete or resurrect other people's work. */
+function restore(json){
+  const snapObjs = JSON.parse(json).filter(o => !remoteDeleted.has(o.id));
+  const have = new Set(snapObjs.map(o => o.id));
+  objs = snapObjs.concat(objs.filter(o => foreign.has(o.id) && !have.has(o.id)));
+  byZ(); selected = null;
+}
+function undo(){ if(previewObjs||!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); broadcast(); render(); }
+function redo(){ if(previewObjs||!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); broadcast(); render(); }
+
+/* ---------- Geometry ---------- */
+function bbox(o){
+  if(o.type==='pen'||o.type==='line'){
+    const xs=o.pts.map(p=>p[0]), ys=o.pts.map(p=>p[1]);
+    return {x:Math.min(...xs),y:Math.min(...ys),w:Math.max(...xs)-Math.min(...xs),h:Math.max(...ys)-Math.min(...ys)};
+  }
+  if(o.type==='text'){ ctx.font=`${o.size}px sans-serif`; return {x:o.x,y:o.y-o.size,w:ctx.measureText(o.text).width,h:o.size*1.2}; }
+  return {x:Math.min(o.x,o.x+o.w),y:Math.min(o.y,o.y+o.h),w:Math.abs(o.w),h:Math.abs(o.h)};
+}
+function hit(o,x,y,pad=6){
+  const b=bbox(o);
+  if(o.type==='pen'||o.type==='line'){
+    for(let i=0;i<o.pts.length;i++){
+      const [ax,ay]=o.pts[i], [bx,by]=o.pts[i+1]||o.pts[i];
+      const dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy||1;
+      const t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/l));
+      if(Math.hypot(x-(ax+t*dx),y-(ay+t*dy))<=pad+o.width) return true;
+    }
+    return false;
+  }
+  return x>=b.x-pad&&x<=b.x+b.w+pad&&y>=b.y-pad&&y<=b.y+b.h+pad;
+}
+function handleAt(x,y){ if(!selected||!objs.includes(selected)) return false; const b=bbox(selected); return Math.hypot(x-(b.x+b.w+4),y-(b.y+b.h+4))<=9; }
+function applyResize(r,x,y){
+  const {o,b,orig}=r, w=Math.max(6,x-b.x), h=Math.max(6,y-b.y);
+  if(o.pts){ const sx=b.w>0?w/b.w:1, sy=b.h>0?h/b.h:1; o.pts=orig.pts.map(p=>[b.x+(p[0]-b.x)*sx,b.y+(p[1]-b.y)*sy]); }
+  else if(o.type==='text'){ o.size=Math.max(8,Math.round(orig.size*(w/Math.max(b.w,1)))); }
+  else { o.x=b.x; o.y=b.y; o.w=w; o.h=h; }
+}
+function topAt(x,y){ for(let i=objs.length-1;i>=0;i--) if(hit(objs[i],x,y)) return objs[i]; return null; }
+function move(o,dx,dy){
+  if(o.pts) o.pts=o.pts.map(p=>[p[0]+dx,p[1]+dy]); else { o.x+=dx; o.y+=dy; }
+}
+
+/* ---------- Rendering ---------- */
+function drawObj(o){
+  ctx.strokeStyle=o.color; ctx.fillStyle=o.color; ctx.lineWidth=o.width||2; ctx.lineCap='round'; ctx.lineJoin='round';
+  if(o.type==='pen'||o.type==='line'){
+    ctx.beginPath(); o.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+    if(o.pts.length===1) ctx.lineTo(o.pts[0][0]+0.1,o.pts[0][1]); ctx.stroke();
+  } else if(o.type==='rect'){ ctx.strokeRect(o.x,o.y,o.w,o.h); }
+  else if(o.type==='ellipse'){ ctx.beginPath(); ctx.ellipse(o.x+o.w/2,o.y+o.h/2,Math.abs(o.w/2),Math.abs(o.h/2),0,0,Math.PI*2); ctx.stroke(); }
+  else if(o.type==='text'){ ctx.font=`${o.size}px sans-serif`; ctx.fillText(o.text,o.x,o.y); }
+}
+function render(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  (previewObjs||objs).forEach(drawObj); if(draft&&!previewObjs) drawObj(draft);
+  if(!previewObjs && selected && objs.includes(selected)){
+    const b=bbox(selected); ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#2563eb'; ctx.lineWidth=1;
+    ctx.strokeRect(b.x-4,b.y-4,b.w+8,b.h+8); ctx.setLineDash([]); ctx.fillStyle='#2563eb'; ctx.fillRect(b.x+b.w,b.y+b.h,8,8); ctx.restore();
+  }
+}
+function resize(){ cv.width=cv.clientWidth; cv.height=cv.clientHeight; render(); }
+addEventListener('resize',resize); resize();
+
+/* ---------- Input ---------- */
+const pos = e => { const r=cv.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; };
+let start=null, lastCursor=0;
+cv.addEventListener('pointerdown',e=>{
+  if(!Sync.online||previewObjs) return;           // read-only while disconnected or previewing
+  const [x,y]=pos(e); start=[x,y]; cv.setPointerCapture(e.pointerId);
+  const color=colorEl.value;
+  if(tool==='pen') draft={type:'pen',color,width:+widthEl.value,pts:[[x,y]]};
+  else if(tool==='line') draft={type:'line',color,width:+widthEl.value,pts:[[x,y],[x,y]]};
+  else if(tool==='rect'||tool==='ellipse') draft={type:tool,color,width:+widthEl.value,x,y,w:0,h:0};
+  else if(tool==='text'){
+    const t=prompt('Text:'); start=null;
+    if(t){ record(); objs.push({id:newId(),z:nextZ(),type:'text',color,size:20,x,y,text:t}); broadcast(); }
+  }
+  else if(tool==='eraser'){ const o=topAt(x,y); if(o){ record(); objs=objs.filter(a=>a!==o); broadcast(); } }
+  else if(tool==='select'){
+    if(handleAt(x,y)){ record(); resizing={o:selected,b:bbox(selected),orig:JSON.parse(JSON.stringify(selected))}; }
+    else { selected=topAt(x,y); dragLast=selected?[x,y]:null; if(selected) record(); }
+  }
+  render();
+});
+cv.addEventListener('pointermove',e=>{
+  const [x,y]=pos(e);
+  const now=performance.now(); if(now-lastCursor>60){ lastCursor=now; Sync.send({type:'cursor:move',x:r1(x),y:r1(y)}); }
+  if(!start) return;
+  if(draft){
+    if(draft.type==='pen') draft.pts.push([x,y]);
+    else if(draft.type==='line') draft.pts[1]=[x,y];
+    else { draft.w=x-start[0]; draft.h=y-start[1]; }
+  } else if(tool==='eraser'){ const o=topAt(x,y); if(o){ record(); objs=objs.filter(a=>a!==o); broadcast(); } }
+  else if(resizing){ applyResize(resizing,x,y); }
+  else if(tool==='select' && selected && dragLast){ move(selected,x-dragLast[0],y-dragLast[1]); dragLast=[x,y]; }
+  render();
+});
+cv.addEventListener('pointerup',()=>{
+  if(draft){ draft.id=newId(); draft.z=nextZ(); record(); objs.push(draft); draft=null; broadcast(); }
+  else if(tool==='select' && selected) broadcast();
+  start=null; dragLast=null; resizing=null; render();
+});
+
+cv.addEventListener('dblclick',e=>{
+  if(!Sync.online||previewObjs) return;
+  const [x,y]=pos(e), o=topAt(x,y);
+  if(o && o.type==='text'){ const t=prompt('Edit text:',o.text); if(t){ record(); o.text=t; broadcast(); render(); } }
+});
+
+/* ---------- Toolbar & keys ---------- */
+document.querySelectorAll('[data-tool]').forEach(b=>b.onclick=()=>{
+  tool=b.dataset.tool; selected=null;
+  document.querySelectorAll('[data-tool]').forEach(x=>x.classList.toggle('active',x===b));
+  render();
+});
+function del(){ if(selected&&!previewObjs){ record(); objs=objs.filter(o=>o!==selected); selected=null; broadcast(); render(); } }
+document.getElementById('btn-delete').onclick=del;
+document.getElementById('btn-undo').onclick=undo;
+document.getElementById('btn-redo').onclick=redo;
+addEventListener('keydown',e=>{
+  const mod=e.ctrlKey||e.metaKey;
+  if(mod&&e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); }
+  else if(mod&&e.key.toLowerCase()==='y'){ e.preventDefault(); redo(); }
+  else if(e.key==='Delete'||e.key==='Backspace'){ del(); }
+});
+
+/* ---------- Remote cursors & state ---------- */
+const remote={}, curLayer=document.getElementById('cursors');
+const colorOf = id => `hsl(${[...id].reduce((h,c)=>(h*31+c.charCodeAt(0))%360,7)} 70% 45%)`;
+function loadAll(list){
+  objs = list.map(fromServer); byZ();
+  shadow.clear(); list.forEach(e => shadow.set(e.id, { type:e.type, z:e.z||0, props:{...e.props} }));
+  foreign = new Set(list.map(e => e.id)); remoteDeleted = new Set(); deleted.clear();
+  undoStack = []; redoStack = []; selected = null; draft = null; render();
+}
+Sync.on('welcome',m=>{ Sync.myId=m.clientId; Sync.online=true; loadAll(m.objects); Sync.setPeople(m.participants); });
+Sync.on('board:reset',m=>{ loadAll(m.objects); });
+Sync.on('presence',m=>{ Sync.setPeople(m.participants);
+  const here=new Set(m.participants.map(p=>p.clientId));
+  for(const id of Object.keys(remote)) if(!here.has(id)){ remote[id].remove(); delete remote[id]; } });
+Sync.on('op',m=>{
+  if(m.clientId===Sync.myId) return;                       // our own change coming back
+  if(m.opType==='add'){
+    if(shadow.has(m.objectId)||deleted.has(m.objectId)) return;
+    const e={id:m.objectId,type:m.payload.type,z:m.payload.z,props:m.payload.props};
+    shadow.set(e.id,{type:e.type,z:e.z||0,props:{...e.props}}); foreign.add(e.id); objs.push(fromServer(e)); byZ();
+  } else if(m.opType==='update'){
+    const o=objs.find(x=>x.id===m.objectId), sh=shadow.get(m.objectId);
+    if(!o||!sh) return;
+    for(const [k,v] of Object.entries(m.payload)){
+      if(k==='z'){ o.z=v; sh.z=v; } else { sh.props[k]=v; o[k==='points'?'pts':k]=v; }
+    }
+    byZ();
+  } else if(m.opType==='delete'){
+    objs=objs.filter(x=>x.id!==m.objectId); shadow.delete(m.objectId);
+    deleted.add(m.objectId); remoteDeleted.add(m.objectId); foreign.delete(m.objectId);
+    if(selected&&selected.id===m.objectId) selected=null;
+  }
+  render();
+});
+Sync.on('cursor',m=>{
+  let el=remote[m.clientId];
+  if(!el){ el=remote[m.clientId]=document.createElement('div'); el.className='cursor'; el.textContent=m.name; el.style.background=colorOf(m.clientId); curLayer.appendChild(el); }
+  el.style.left=m.x+'px'; el.style.top=m.y+'px';
+  clearTimeout(el._t); el._t=setTimeout(()=>{ el.remove(); delete remote[m.clientId]; },4000);
+});
+Sync.on('error',m=>{ console.warn('gateway:',m.code,m.message); });
+
+document.getElementById('btn-link').onclick=()=>{
+  const url=location.origin+location.pathname+'?board='+boardId;
+  (navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>setStatus('Link copied'),()=>prompt('Share this link:',url));
+};
+
+/* ---------- Versions: save, list, preview (read-only), restore ---------- */
+const panel=document.getElementById('versions'), banner=document.getElementById('banner');
+const boardApi=async(path,opts)=>{ const r=await fetch(`${API}/api/boards/${boardId}${path}`,opts); if(!r.ok) throw new Error(r.status); return r.json(); };
+const postJson=(path,body)=>boardApi(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+function endPreview(){ previewObjs=null; banner.hidden=true; render(); }
+async function loadVersions(){
+  const list=await boardApi('/versions');
+  panel.replaceChildren(Object.assign(document.createElement('b'),{textContent:'Versions'}));
+  if(!list.length) panel.append(Object.assign(document.createElement('div'),{textContent:'No versions yet.'}));
+  for(const v of list){
+    const row=document.createElement('div'); row.className='ver';
+    const when=new Date(v.created_at.endsWith('Z')?v.created_at:v.created_at+'Z').toLocaleString();
+    row.append(Object.assign(document.createElement('span'),{textContent:`#${v.id} ${v.name||(v.is_auto?'auto-save':'unnamed')} · ${v.author} · ${when}`}));
+    const pv=Object.assign(document.createElement('button'),{textContent:'Preview'});
+    pv.onclick=async()=>{
+      const d=await boardApi('/versions/'+v.id);
+      previewObjs=Object.entries(d.state).map(([id,f])=>{ const {type,z,...props}=f; return fromServer({id,type,z,props}); });
+      banner.replaceChildren(document.createTextNode(`Previewing version #${v.id} (read-only) `),
+        Object.assign(document.createElement('button'),{textContent:'Back to live',onclick:endPreview}));
+      banner.hidden=false; render();
+    };
+    const rs=Object.assign(document.createElement('button'),{textContent:'Restore'});
+    rs.onclick=async()=>{
+      if(!confirm(`Restore version #${v.id}? Everyone on the board will see it (history is kept).`)) return;
+      endPreview();
+      try{ await postJson(`/versions/${v.id}/restore`,{author:myName}); setStatus('Version restored'); loadVersions(); }
+      catch(e){ setStatus('Could not restore'); }
+    };
+    row.append(pv,rs); panel.append(row);
+  }
+}
+document.getElementById('btn-save').onclick=async()=>{
+  const name=prompt('Name for this version:'); if(name===null) return;
+  try{ await postJson('/versions',{name:name.trim()||null,author:myName}); setStatus('Version saved'); if(!panel.hidden) loadVersions(); }
+  catch(e){ setStatus('Could not save version'); }
+};
+document.getElementById('btn-versions').onclick=()=>{
+  panel.hidden=!panel.hidden;
+  if(panel.hidden) endPreview(); else loadVersions().catch(()=>setStatus('Could not load versions'));
+};
+
+/* ---------- Start: open (or create) a board, then connect ---------- */
+(async()=>{
+  if(location.protocol==='file:'){ setStatus('Open this page from the server: http://127.0.0.1:8000/'); return; }
+  if(!boardId){
+    try{
+      const r=await fetch(API+'/api/boards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Shared board'})});
+      boardId=(await r.json()).id;
+      history.replaceState(null,'','?board='+boardId);
+    }catch(e){ setStatus('Cannot reach the server'); return; }
+  }
+  Sync.connect();
+})();
+</script>
+</body>
+</html>
