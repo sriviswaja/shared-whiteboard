@@ -1,11 +1,15 @@
+
 """Browser tests: two real browsers share one board through the server (WebSocket).
 
-Skipped automatically when Playwright or its browsers are not installed, so the normal
-CI run (pip install -r requirements.txt) is unaffected. To run them locally:
+Skipped automatically when Playwright or its browsers are not installed.
+To run locally:
 
-    pip install playwright && playwright install chromium
-    pytest tests/e2e -v
+    pip install playwright
+    playwright install chromium firefox webkit
+
+Select a browser using PLAYWRIGHT_BROWSER (chromium, firefox, or webkit).
 """
+import os
 import socket
 import subprocess
 import sys
@@ -25,11 +29,29 @@ def server(tmp_path_factory):
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
+
     db = tmp_path_factory.mktemp("e2e") / "e2e.db"
+
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "src.server.main:app", "--port", str(port), "--log-level", "warning"],
-        cwd=ROOT, env={**__import__("os").environ, "DATABASE_URL": f"sqlite:///{db}"})
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "src.server.main:app",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "DATABASE_URL": f"sqlite:///{db}",
+        },
+    )
+
     base = f"http://127.0.0.1:{port}"
+
     for _ in range(100):
         try:
             if httpx.get(base + "/healthz").status_code == 200:
@@ -39,10 +61,53 @@ def server(tmp_path_factory):
     else:
         proc.kill()
         pytest.fail("server did not start")
+
     yield base
+
     proc.terminate()
     proc.wait(timeout=10)
 
+
+@pytest.fixture(scope="module")
+def browser():
+    browser_name = os.getenv("PLAYWRIGHT_BROWSER", "chromium").lower()
+
+    if browser_name not in ("chromium", "firefox", "webkit"):
+        pytest.fail(f"Unsupported browser: {browser_name}")
+
+    with sync_api.sync_playwright() as p:
+        browser_type = getattr(p, browser_name)
+
+        try:
+            b = browser_type.launch()
+        except Exception as exc:
+            pytest.skip(f"{browser_name} not available: {exc}")
+
+        yield b
+        b.close()
+
+sync_api = pytest.importorskip("playwright.sync_api")
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module")
+def browser():
+    browser_name = os.getenv("PLAYWRIGHT_BROWSER", "chromium").lower()
+
+    if browser_name not in ("chromium", "firefox", "webkit"):
+        pytest.fail(f"Unsupported browser: {browser_name}")
+
+    with sync_api.sync_playwright() as p:
+        browser_type = getattr(p, browser_name)
+
+        try:
+            b = browser_type.launch()
+        except Exception as exc:
+            pytest.skip(f"{browser_name} not available: {exc}")
+
+        yield b
+        b.close()
 
 @pytest.fixture(scope="module")
 def browser():

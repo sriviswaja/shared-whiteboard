@@ -23,7 +23,7 @@ Each item says what the documents say, what was built, and why.
 | # | Test cases | Planned | Actual |
 |---|-----------|---------|--------|
 | D-6 | TC-Draw-01..06 | Automated Playwright tests | Verified **manually** in two browser tabs (pen, shapes, text, select/move/resize/delete, eraser, undo/redo). No automated tests. |
-| D-7 | TC-Perf-03 (30 fps), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | Not run. |
+| D-7 | TC-Perf-03 (30 fps), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | TC-Perf-03 remains not run. TC-Compat-01 executed: 13/13 Playwright tests passed on Chromium, Firefox and WebKit (39 successful executions total). |
 | D-8 | TC-Ops-01 (99% availability), TC-Sec-01 (TLS scan) | Run against a deployed host | **Not run: the system was not deployed.** `tests/ops/check_tls.sh` implements TC-Sec-01 and is ready to run against a deployment. |
 | D-9 | All other cases | pytest and k6 | Implemented as planned: 158 automated tests plus k6 load tests (TC-Perf-01/02, TC-Sec-04) pass in CI. |
 
