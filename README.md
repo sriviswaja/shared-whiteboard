@@ -130,3 +130,7 @@ See [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) for the full list.
 | Samhitha | Canvas UI |
 | Shloka | Sync gateway |
 | Sushir | Persistence, tests, performance |
+## Demo videos
+
+- Sprint 1 demo: PASTE_LINK_HERE
+- Sprint 2 demo: PASTE_LINK_HERE
