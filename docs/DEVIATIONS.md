@@ -5,36 +5,31 @@ Each item says what the documents say, what was built, and why.
 
 ## 1. Functional deviations
 
-| # | Ref | Documents say | What was built | Reason / plan |
-|---|-----|---------------|----------------|---------------|
-| D-1 | WB-F-020, WB-F-023 | Every change is broadcast to all participants in real time through the server, and clients reconnect and resynchronise | The WebSocket gateway implements this and is covered by automated tests and k6 load tests. The canvas UI does **not** use it yet: `canvas.html` syncs between tabs of the same browser using BroadcastChannel, so real-time sync across different devices is not available end to end. | The UI was built against a demo transport; wiring it to `/ws/boards/{id}` was not completed before the freeze. |
-| D-2 | WB-F-034 | Restoring a version creates a new version and **notifies all participants** | Restore creates the new version and an audit-log entry (WB-SR-005), but connected clients are **not** notified. They see the restored state when they reload or rejoin. `hub.board_reset` exists but the REST endpoint does not call it, and the `version:restored` message is not implemented. | Not completed within the sprint. The fix is to call `hub.board_reset` from the restore endpoint. |
-| D-3 | WB-F-033 | Read-only preview of any version | The backend can return the stored state of any version (REST), but the canvas UI has no read-only preview mode. | Not completed within the sprint; UI work was prioritised on drawing and sync. |
-| D-4 | SAD 5.x | REST errors use `{"error": {"code": ...}}` | FastAPI's default `{"detail": ...}` is used. WebSocket close codes (4001, 4002, 4003, 4290) are as documented. | Framework default kept; behaviour is equivalent, only the body shape differs. |
-
-## 2. Structural deviations
-
 | # | Ref | Documents say | What was built | Reason |
 |---|-----|---------------|----------------|--------|
-| D-5 | SAD layout | Client code lives under `src/client/` and is served by FastAPI | The canvas UI is a single file, `canvas.html`, at the repo root, opened directly in the browser | The UI was delivered as one self-contained page; moving and serving it was not done before the freeze. |
+| D-1 | WB-F-034, SAD 5.2 | Restoring a version notifies participants with a `version:restored` message | Restore creates the new version and audit entry, then sends every connected client a `board:reset` message (reason `restore`) carrying the restored objects. Behaviour is as required; only the message name differs. | The gateway already had `board:reset` for replacing a whole board; reusing it avoided a second message type. |
+| D-2 | SAD 5.x | REST errors use `{"error": {"code": ...}}` | FastAPI's default `{"detail": ...}` is used. WebSocket close codes (4001, 4002, 4003, 4290) are as documented. | Framework default kept; only the body shape differs. |
+| D-3 | WB-F-023, TC-Sync-04 | While offline a user can still draw, and the changes merge after reconnecting | The client reconnects automatically (retry after 1, 2, 4... up to 10 s) and takes the latest board state, but the canvas is read-only while disconnected. | Queueing and merging offline edits was out of scope for the sprint. |
+| D-4 | WB-F-010 | Strokes are sent as drawn | Strokes longer than about 2,000 points are thinned before sending, to stay inside the gateway's 64 KB message and 5,000-point limits. | Protects the server limits (WB-SR-003) at no visible cost to normal drawing. |
 
-## 3. Verification deviations (Test Plan)
+## 2. Verification deviations (Test Plan)
 
 | # | Test cases | Planned | Actual |
 |---|-----------|---------|--------|
-| D-6 | TC-Draw-01..06 | Automated Playwright tests | Verified **manually** in two browser tabs (pen, shapes, text, select/move/resize/delete, eraser, undo/redo). No automated tests. |
-| D-7 | TC-Perf-03 (30 fps), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | TC-Perf-03 remains not run. TC-Compat-01 executed: 13/13 Playwright tests passed on Chromium, Firefox and WebKit (39 successful executions total). |
-| D-8 | TC-Ops-01 (99% availability), TC-Sec-01 (TLS scan) | Run against a deployed host | **Not run: the system was not deployed.** `tests/ops/check_tls.sh` implements TC-Sec-01 and is ready to run against a deployment. |
-| D-9 | All other cases | pytest and k6 | Implemented as planned: 158 automated tests plus k6 load tests (TC-Perf-01/02, TC-Sec-04) pass in CI. |
+| D-5 | TC-Draw-01..06, TC-Sync-01/02/04, TC-Ver-02/04/05 (UI side) | Automated browser tests | Automated with Playwright (`tests/e2e/`, 15 tests, two separate browser sessions per test), on **Chromium only**, and **not run in CI** (they skip when Playwright is not installed). |
+| D-6 | TC-Perf-03 (30 fps, 1,000 objects), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | Not run. |
+| D-7 | TC-Ops-01 (99% availability), TC-Sec-01 (TLS scan) | Run against a deployed host | **TC-Ops-01:** the restart check was run with `tests/ops/check_availability.sh` (server killed with `kill -9` restarted in 1.7 s and the board survived); the 99% monthly uptime could not be measured. **TC-Sec-01:** not run, the system was not deployed. `tests/ops/check_tls.sh` is ready to run against a deployment. |
+| D-8 | All other cases | pytest and k6 | Implemented as planned: 160 pytest tests, 15 browser tests, and the k6 load tests (TC-Perf-01/02, TC-Sec-04). |
 
-## 4. Process deviations
+## 3. Process deviations
 
 | # | Planned | Actual |
 |---|---------|--------|
-| D-10 | Backlog, story points and assignments by 12 Oct; Sprint-1 on 19-23 Oct | Backend work was merged earlier (11 Oct) and the UI on 27 Oct. The GitHub Project and 32 backlog issues (one per SRS requirement) were created on 30 Oct, so the issue-tracking history does not show the work as it happened. |
-| D-11 | Even contribution across the team | Commits were uneven (the version service, CI and docs were mostly done by one member; the UI arrived late). Work was reassigned mid-project. See the commit history. |
+| D-9 | Backlog, story points and assignments by 12 Oct; Sprint-1 on 19-23 Oct | Backend work was merged earlier (11 Oct). The canvas UI arrived on 27 Oct and was connected to the server on 30 Oct. The GitHub Project and 32 backlog issues (one per SRS requirement) were created on 30 Oct, so the issue-tracking history does not show the work as it happened. |
+| D-10 | Even contribution across the team | Commits were uneven (the version service, CI and docs were mostly done by one member; the UI arrived late). Work was reassigned mid-project. See the commit history. |
 
-## 5. Document updates made
+## 4. Document updates made
 
-- SAD v1.1 (27 Oct): data model, version API and layout aligned with the implementation.
-- SRS and STP: RTM status to be updated with the final results above (pending at time of writing).
+- SAD v1.1 (13 Oct): persistence, snapshots and load-test results added. SAD v1.2 (27 Oct): data model, version API and layout aligned with the implementation.
+- STP v1.1 (13 Oct): test execution results added (13.3). STP v1.2 (5 Nov): test cases updated after Sprints 1 and 2, and an automated test mapping added (13.4).
+- SRS: RTM status to be updated with the final results above (pending at time of writing).

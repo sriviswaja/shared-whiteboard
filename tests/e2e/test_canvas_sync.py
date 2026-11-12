@@ -77,45 +77,12 @@ def browser():
 
     with sync_api.sync_playwright() as p:
         browser_type = getattr(p, browser_name)
-
         try:
             b = browser_type.launch()
         except Exception as exc:
             pytest.skip(f"{browser_name} not available: {exc}")
 
-        yield b
-        b.close()
-
-sync_api = pytest.importorskip("playwright.sync_api")
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-@pytest.fixture(scope="module")
-def browser():
-    browser_name = os.getenv("PLAYWRIGHT_BROWSER", "chromium").lower()
-
-    if browser_name not in ("chromium", "firefox", "webkit"):
-        pytest.fail(f"Unsupported browser: {browser_name}")
-
-    with sync_api.sync_playwright() as p:
-        browser_type = getattr(p, browser_name)
-
-        try:
-            b = browser_type.launch()
-        except Exception as exc:
-            pytest.skip(f"{browser_name} not available: {exc}")
-
-        yield b
-        b.close()
-
-@pytest.fixture(scope="module")
-def browser():
-    with sync_api.sync_playwright() as p:
-        try:
-            b = p.chromium.launch()
-        except Exception as exc:   # browsers not installed
-            pytest.skip(f"chromium not available: {exc}")
+        assert b.browser_type.name == browser_name
         yield b
         b.close()
 
@@ -225,7 +192,7 @@ def test_tc_sync_02_remote_cursor_shows_name(browser, board):
     assert b.locator(".cursor").first.inner_text() == "Alice"
 
 
-def test_tc_board_02_late_joiner_gets_existing_drawing(browser, board):
+def test_tc_sync_04_joiner_receives_the_full_board_state(browser, board):
     base, bid = board
     a = open_page(browser, base, bid, "Alice")
     drag(a, 50, 50, 200, 120)
@@ -304,27 +271,48 @@ def test_tc_sync_04_reconnect_and_resync(browser, board):
     b.wait_for_function("Sync.online === true && objs.length === 1", timeout=30000)
 
 
-def test_tc_ver_save_preview_restore_from_the_ui(browser, board):
+def saved_version(browser, board, name="first draft"):
+    """Alice draws one stroke and saves a named version, then draws a second stroke."""
     base, bid = board
     a, b = open_page(browser, base, bid, "Alice"), open_page(browser, base, bid, "Bob")
-    drag(a, 50, 50, 200, 90)                                   # one stroke
+    drag(a, 50, 50, 200, 90)
     b.wait_for_function("objs.length === 1")
-    a.reply[0] = "first draft"
-    a.click("#btn-save")                                       # TC-Ver-01: manual named version
+    a.reply[0] = name
+    a.click("#btn-save")
     a.wait_for_function("document.getElementById('status').textContent === 'Version saved'")
-    drag(a, 50, 150, 200, 190)                                 # a second stroke, after the version
+    drag(a, 50, 150, 200, 190)
     b.wait_for_function("objs.length === 2")
+    return a, b
 
+
+def test_tc_ver_02_named_version_is_saved_and_listed(browser, board):
+    a, b = saved_version(browser, board)
     a.click("#btn-versions")
     a.wait_for_selector("#versions .ver")
-    assert "first draft" in a.locator("#versions .ver").first.inner_text()
-    a.locator("#versions .ver button", has_text="Preview").first.click()   # TC-Ver-02: read-only preview
+    text = a.locator("#versions .ver").first.inner_text()
+    assert "first draft" in text and "Alice" in text
+
+
+def test_tc_ver_04_preview_is_read_only(browser, board):
+    a, b = saved_version(browser, board)
+    a.click("#btn-versions")
+    a.wait_for_selector("#versions .ver")
+    a.locator("#versions .ver button", has_text="Preview").first.click()
     a.wait_for_function("previewObjs !== null && previewObjs.length === 1")
-    assert a.evaluate("objs.length") == 2                      # live board untouched
+    assert a.evaluate("objs.length") == 2                      # the live board is untouched
     drag(a, 60, 300, 200, 330)                                 # drawing is ignored while previewing
     assert a.evaluate("objs.length") == 2
-    a.click("#banner button")                                  # back to live
+    drag(b, 60, 300, 200, 330)                                 # B keeps working meanwhile
+    a.wait_for_function("objs.length === 3")
+    a.click("#banner button")                                  # back to the live board
+    assert a.evaluate("previewObjs") is None
 
-    a.locator("#versions .ver button", has_text="Restore").first.click()   # TC-Ver-03: restore
+
+def test_tc_ver_05_restore_updates_everyone(browser, board):
+    a, b = saved_version(browser, board)
+    a.click("#btn-versions")
+    a.wait_for_selector("#versions .ver")
+    a.locator("#versions .ver button", has_text="Restore").first.click()
     a.wait_for_function("objs.length === 1")
     b.wait_for_function("objs.length === 1")                   # Bob sees it without reloading
+
