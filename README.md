@@ -111,6 +111,8 @@ PLAYWRIGHT_BROWSER=webkit pytest tests/e2e -v
 python scripts/run_cross_browser.py
 ```
 
+Detailed test metrics and per-engine execution results are documented in [`docs/reports/cross_browser_test_report.md`](docs/reports/cross_browser_test_report.md).
+
 CI (GitHub Actions) runs the whole suite on every push and pull request.
 
 ## Contributing

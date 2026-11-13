@@ -64,4 +64,4 @@ These gaps are also recorded in `docs/DEVIATIONS.md` (D-6 and D-7): the 30 fps c
 
 ## System-level scenarios exercised in real browsers
 
-Two separate browser sessions on one board (Playwright across Chromium, Firefox, WebKit): drawing with every tool syncs to the other user; live cursors with names; a late joiner receives the existing board; a disconnected client is read-only, reconnects and receives the latest state; save, list, preview (read-only) and restore versions, with the other user updated at once. See `tests/e2e/test_canvas_sync.py`, `scripts/run_cross_browser.py`, and the results in the unit test report.
+Two separate browser sessions on one board (Playwright across Chromium, Firefox, WebKit): drawing with every tool syncs to the other user; live cursors with names; a late joiner receives the existing board; a disconnected client is read-only, reconnects and receives the latest state; save, list, preview (read-only) and restore versions, with the other user updated at once. See `tests/e2e/test_canvas_sync.py`, `scripts/run_cross_browser.py`, `docs/reports/cross_browser_test_report.md`, and the results in the unit test report.
