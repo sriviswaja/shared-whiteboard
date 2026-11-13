@@ -98,9 +98,20 @@ The browser tests in `tests/e2e/` (drawing tools, sync between two browsers, cur
 
 ```bash
 pip install playwright
-playwright install chromium
+playwright install chromium firefox webkit
+
+# Run on the default browser (Chromium)
 pytest tests/e2e -v
+
+# Or select a specific browser via environment variable:
+PLAYWRIGHT_BROWSER=firefox pytest tests/e2e -v
+PLAYWRIGHT_BROWSER=webkit pytest tests/e2e -v
+
+# Or run the full cross-browser test runner across all three engines:
+python scripts/run_cross_browser.py
 ```
+
+Detailed test metrics and per-engine execution results are documented in [`docs/reports/cross_browser_test_report.md`](docs/reports/cross_browser_test_report.md).
 
 CI (GitHub Actions) runs the whole suite on every push and pull request.
 
@@ -118,7 +129,7 @@ CI (GitHub Actions) runs the whole suite on every push and pull request.
 
 - While a client is disconnected the board is read-only; it reconnects automatically and shows the latest state. Drawing offline and merging later is not supported.
 - Very long pen strokes are thinned to about 2,000 points to stay within the gateway's message limits.
-- The browser tests run on Chromium only, and are not part of the CI run. Firefox and WebKit, the 30 fps check (TC-Perf-03), and the availability and TLS checks on a deployment (TC-Ops-01, TC-Sec-01) were not run.
+- The browser tests cover Chromium, Firefox, and WebKit (TC-Compat-01 executed, 15/15 passed across all three browsers; 45 total executions). They are not part of the default CI run (skipped when Playwright is not installed). The 30 fps check (TC-Perf-03), and the availability and TLS checks on a deployment (TC-Ops-01, TC-Sec-01) were not run.
 
 See [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) for the full list.
 

@@ -16,8 +16,8 @@ Each item says what the documents say, what was built, and why.
 
 | # | Test cases | Planned | Actual |
 |---|-----------|---------|--------|
-| D-5 | TC-Draw-01..06, TC-Sync-01/02/04, TC-Ver-02/04/05 (UI side) | Automated browser tests | Automated with Playwright (`tests/e2e/`, 15 tests, two separate browser sessions per test), on **Chromium only**, and **not run in CI** (they skip when Playwright is not installed). |
-| D-6 | TC-Perf-03 (30 fps, 1,000 objects), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | Not run. |
+| D-5 | TC-Draw-01..06, TC-Sync-01/02/04, TC-Ver-02/04/05 (UI side) | Automated browser tests | Automated with Playwright (`tests/e2e/`, 15 tests, two separate browser sessions per test) across **Chromium, Firefox, and WebKit**, and **not run in CI** (they skip when Playwright is not installed). |
+| D-6 | TC-Perf-03 (30 fps, 1,000 objects), TC-Compat-01 (Chromium, Firefox, WebKit) | Automated | **TC-Perf-03:** Not run. **TC-Compat-01:** Executed and passed across all three browsers (Chromium, Firefox, WebKit): 15/15 Playwright tests passed per browser (45 total passing executions, 0 failures). |
 | D-7 | TC-Ops-01 (99% availability), TC-Sec-01 (TLS scan) | Run against a deployed host | **TC-Ops-01:** the restart check was run with `tests/ops/check_availability.sh` (server killed with `kill -9` restarted in 1.7 s and the board survived); the 99% monthly uptime could not be measured. **TC-Sec-01:** not run, the system was not deployed. `tests/ops/check_tls.sh` is ready to run against a deployment. |
 | D-8 | All other cases | pytest and k6 | Implemented as planned: 160 pytest tests, 15 browser tests, and the k6 load tests (TC-Perf-01/02, TC-Sec-04). |
 
@@ -31,5 +31,5 @@ Each item says what the documents say, what was built, and why.
 ## 4. Document updates made
 
 - SAD v1.1 (13 Oct): persistence, snapshots and load-test results added. SAD v1.2 (27 Oct): data model, version API and layout aligned with the implementation.
-- STP v1.1 (13 Oct): test execution results added (13.3). STP v1.2 (5 Nov): test cases updated after Sprints 1 and 2, and an automated test mapping added (13.4).
+- STP v1.1 (13 Oct): test execution results added (13.3). STP v1.2 (5 Nov): test cases updated after Sprints 1 and 2, and an automated test mapping added (13.4). STP v1.3 (12 Nov): recorded TC-Compat-01 cross-browser execution results across Chromium, Firefox, and WebKit (15/15 passed on each).
 - SRS: RTM status to be updated with the final results above (pending at time of writing).
