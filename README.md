@@ -143,5 +143,4 @@ See [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) for the full list.
 | Sushir | Persistence, tests, performance |
 ## Demo videos
 
-- Sprint 1 demo: PASTE_LINK_HERE
-- Sprint 2 demo: PASTE_LINK_HERE
+- Sprint demo: [demo.mp4](docs/demo/demo.mp4)
