@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 sync_api = pytest.importorskip("playwright.sync_api")
+pytestmark = pytest.mark.e2e
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -75,10 +76,12 @@ def browser():
     if browser_name not in ("chromium", "firefox", "webkit"):
         pytest.fail(f"Unsupported browser: {browser_name}")
 
+    headless = os.getenv("PLAYWRIGHT_HEADLESS", "1").lower() not in ("0", "false", "no")
+
     with sync_api.sync_playwright() as p:
         browser_type = getattr(p, browser_name)
         try:
-            b = browser_type.launch()
+            b = browser_type.launch(headless=headless)
         except Exception as exc:
             pytest.skip(f"{browser_name} not available: {exc}")
 
