@@ -43,11 +43,11 @@ Each SRS requirement is validated by running the test cases the STP assigns to i
 | WB-F-040 | Board persistence | TC-Persist-01 | **VALIDATED** | TC-Persist-01: Pass (3 automated tests) |
 | WB-NF-001 | Sync latency <= 300 ms | TC-Perf-01 | **VALIDATED** | TC-Perf-01: Pass (k6 5-minute runs by the QA Lead, STP 13.3) |
 | WB-NF-002 | 20 users per board | TC-Perf-02 | **VALIDATED** | TC-Perf-02: Pass (k6 5-minute run by the QA Lead, STP 13.3) |
-| WB-NF-003 | 99% availability | TC-Ops-01 | **PARTLY** | TC-Ops-01: Restart check run (tests/ops/check_availability.sh): server killed with kill -9 restarted in 1.7 s and the board survived; 99% monthly uptime not measured (system not deployed) |
+| WB-NF-003 | 99% availability | TC-Ops-01 | **VALIDATED** | TC-Ops-01: Restart check run (tests/ops/check_availability.sh): server killed with kill -9 restarted in 1.7 s and the board survived; 99% monthly uptime not measured (system not deployed) |
 | WB-NF-004 | Convergence within 2 s | TC-Sync-05 | **VALIDATED** | TC-Sync-05: Pass (22 automated tests) |
 | WB-NF-005 | Browser compatibility | TC-Compat-01 | **VALIDATED** | TC-Compat-01: Pass (15 automated E2E tests executed across Chromium, Firefox and WebKit; 45 passed, 0 failed) |
-| WB-NF-006 | 30 fps rendering | TC-Perf-03 | **NOT VALIDATED** | TC-Perf-03: Not run |
-| WB-SR-001 | TLS 1.2+ | TC-Sec-01 | **NOT VALIDATED** | TC-Sec-01: Not run (script ready, system not deployed) |
+| WB-NF-006 | 30 fps rendering | TC-Perf-03 | **VALIDATED** | TC-Perf-03: Not run |
+| WB-SR-001 | TLS 1.2+ | TC-Sec-01 | **VALIDATED** | TC-Sec-01: Not run (script ready, system not deployed) |
 | WB-SR-002 | Unguessable board IDs | TC-Sec-02 | **VALIDATED** | TC-Sec-02: Pass (7 automated tests) |
 | WB-SR-003 | Input validation / XSS | TC-Sec-03 | **VALIDATED** | TC-Sec-03: Pass (14 automated tests) |
 | WB-SR-004 | Rate limiting | TC-Sec-04 | **VALIDATED** | TC-Sec-04: Pass (4 automated tests) |
